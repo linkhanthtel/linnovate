@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from 'react-native';
 import { Link } from 'expo-router';
 import { useState, useEffect } from 'react';
 import * as Animatable from 'react-native-animatable';
@@ -21,6 +21,9 @@ export default function Home() {
     medium: 0,
     low: 0
   });
+  const [refreshing, setRefreshing] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
 
   useEffect(() => {
     loadTasks();
@@ -36,9 +39,25 @@ export default function Home() {
     }, [])
   );
 
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await loadTasks();
+    } catch (error) {
+      console.error('Error refreshing tasks:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
   const loadTasks = async () => {
-    const storedTasks = await taskStore.getTasks();
-    setTasks(storedTasks);
+    try {
+      const storedTasks = await taskStore.getTasks();
+      setTasks(storedTasks);
+    } catch (error) {
+      console.error('Error loading tasks:', error);
+      setTasks([]);
+    }
   };
 
   const calculateStats = () => {
@@ -56,26 +75,41 @@ export default function Home() {
                          task.description.toLowerCase().includes(searchQuery.toLowerCase());
     
     const today = new Date().toISOString().split('T')[0];
-    const taskDate = new Date(task.createdAt).toISOString().split('T')[0];
+    const taskDate = new Date(task.dueDate).toISOString().split('T')[0];
+    const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
     
     switch(selectedFilter) {
       case 'today':
-        return matchesSearch && taskDate === today;
+        return matchesSearch && taskDate === today && matchesPriority;
       case 'upcoming':
-        return matchesSearch && taskDate > today;
+        return matchesSearch && taskDate > today && matchesPriority;
       case 'completed':
-        return matchesSearch && task.completed;
+        return matchesSearch && task.completed && matchesPriority;
       default:
-        return matchesSearch;
+        return matchesSearch && matchesPriority;
     }
+  }).sort((a, b) => {
+    const dateA = new Date(a.dueDate).getTime();
+    const dateB = new Date(b.dueDate).getTime();
+    return sortOrder === 'asc' ? dateA - dateB : dateB - dateA;
   });
 
   return (
     <Animatable.View style={styles.container} animation="fadeIn" duration={500}>
       <View style={styles.header}>
-        <Animatable.Text style={styles.title} animation="slideInDown">
-          Linnovate
-        </Animatable.Text>
+        <View style={styles.headerTop}>
+          <Animatable.Text style={styles.title} animation="slideInDown">
+            Linnovate
+          </Animatable.Text>
+          <TouchableOpacity 
+            style={styles.sortButton}
+            onPress={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+          >
+            <Text style={styles.sortButtonText}>
+              {sortOrder === 'asc' ? '↑' : '↓'}
+            </Text>
+          </TouchableOpacity>
+        </View>
         <SearchBar 
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -84,12 +118,41 @@ export default function Home() {
       
       <TaskStats stats={stats} />
       
-      <TaskFilter
-        selected={selectedFilter}
-        onSelect={setSelectedFilter}
-      />
+      <View style={styles.filterContainer}>
+        <TaskFilter
+          selected={selectedFilter}
+          onSelect={setSelectedFilter}
+        />
+        <View style={styles.priorityFilter}>
+          {['all', 'high', 'medium', 'low'].map((priority) => (
+            <TouchableOpacity
+              key={priority}
+              style={[
+                styles.priorityButton,
+                priorityFilter === priority && styles.activePriorityButton
+              ]}
+              onPress={() => setPriorityFilter(priority as any)}
+            >
+              <Text style={[
+                styles.priorityButtonText,
+                priorityFilter === priority && styles.activePriorityButtonText
+              ]}>
+                {priority.charAt(0).toUpperCase() + priority.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
 
-      <ScrollView style={styles.taskList}>
+      <ScrollView 
+        style={styles.taskList}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
+        }
+      >
         {filteredTasks.map((task, index) => (
           <Animatable.View
             key={task.id}
@@ -191,5 +254,46 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 16,
     marginTop: 20,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  sortButton: {
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 8,
+  },
+  sortButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  filterContainer: {
+    paddingHorizontal: 20,
+  },
+  priorityFilter: {
+    flexDirection: 'row',
+    marginTop: 10,
+    marginBottom: 15,
+  },
+  priorityButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+    backgroundColor: '#f0f0f0',
+    marginRight: 8,
+  },
+  activePriorityButton: {
+    backgroundColor: '#007AFF',
+  },
+  priorityButtonText: {
+    color: '#666',
+    fontSize: 14,
+  },
+  activePriorityButtonText: {
+    color: '#fff',
   },
 });
